@@ -1,0 +1,37 @@
+import time
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, sum as _sum
+
+
+# Initialize Spark with Prometheus Metrics Enabled
+spark = SparkSession.builder \
+    .appName("SparkJobMonitoring") \
+    .config("spark.ui.prometheus.enabled", "true") \
+    .config("spark.metrics.conf.*.sink.prometheusServlet.class", "org.apache.spark.metrics.sink.PrometheusServlet") \
+    .config("spark.metrics.conf.*.sink.prometheusServlet.path", "/metrics/executors/prometheus") \
+    .getOrCreate()
+
+# Load Data
+customers = spark.read.option("header", "true").option("inferSchema", "true").csv("customers.csv")
+orders = spark.read.option("header", "true").option("inferSchema", "true").csv("orders.csv")
+
+# filtering data and joining 
+filtered_customers = customers.filter(col("age") >= 18)
+
+
+filtered_orders = orders.filter((col("status") == "Completed") & (col("quantity") >= 2))
+
+joined_df = filtered_orders.join(filtered_customers, "customer_id")
+
+# total revenue
+result_df = joined_df.withColumn("revenue", col("quantity") * col("price")) \
+    .groupBy("country") \
+    .agg(_sum("revenue").alias("total_revenue")) \
+    .orderBy(col("total_revenue").desc())
+
+result_df.show()
+
+# Keep session on to allow Prometheus scrapers to read metrics
+time.sleep(300)
+
+spark.stop()
